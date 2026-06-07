@@ -1,0 +1,11 @@
+services:
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      DATA_DIR: /app/bitcoin_pipeline/data
+      DUCKDB_PATH: /app/bitcoin_pipeline/data/bitcoin_pipeline.duckdb
+      AWS_REGION: ap-southeast-1
+    volumes:
+      - ./bitcoin_pipeline/data:/app/bitcoin_pipeline/data

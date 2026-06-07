@@ -1,0 +1,22 @@
+name: bitcoin_pipeline
+version: "1.0.0"
+config-version: 2
+
+profile: bitcoin_pipeline
+
+model-paths: ["bitcoin_pipeline/dbt/models"]
+test-paths: ["bitcoin_pipeline/dbt/tests"]
+macro-paths: ["bitcoin_pipeline/dbt/macros"]
+
+clean-targets:
+  - target
+  - dbt_packages
+
+models:
+  bitcoin_pipeline:
+    staging:
+      +materialized: table
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: table

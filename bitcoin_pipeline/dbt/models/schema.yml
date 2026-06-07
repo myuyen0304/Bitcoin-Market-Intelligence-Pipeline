@@ -1,0 +1,72 @@
+version: 2
+
+models:
+  - name: stg_coingecko_market_chart
+    description: Cleaned Silver table for CoinGecko daily BTC market data.
+    columns:
+      - name: date_day
+        tests:
+          - not_null
+      - name: coin_id
+        tests:
+          - not_null
+      - name: price_usd
+        tests:
+          - not_null
+      - name: volume_usd
+        tests:
+          - not_null
+
+  - name: stg_binance_klines
+    description: Cleaned Silver table for Binance BTCUSDT daily and hourly klines.
+    columns:
+      - name: open_time
+        tests:
+          - not_null
+      - name: symbol
+        tests:
+          - not_null
+      - name: interval
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['1d', '1h']
+      - name: close
+        tests:
+          - not_null
+      - name: volume
+        tests:
+          - not_null
+
+  - name: stg_fear_greed_index
+    description: Cleaned Silver table for Alternative.me Fear and Greed Index history.
+    columns:
+      - name: date_day
+        tests:
+          - not_null
+      - name: fear_greed_value
+        tests:
+          - not_null
+      - name: sentiment_label
+        tests:
+          - not_null
+
+  - name: mart_btc_price_analysis
+    description: Gold mart for BTC price trend, moving averages, volatility, and sentiment overlay.
+    columns:
+      - name: date_day
+        tests:
+          - not_null
+      - name: symbol
+        tests:
+          - not_null
+      - name: close
+        tests:
+          - not_null
+
+  - name: mart_btc_sentiment_correlation
+    description: Gold mart for rolling sentiment and return relationship analysis.
+
+  - name: mart_btc_volume_anomalies
+    description: Gold mart for detecting unusual BTC trading volume days.
