@@ -1,0 +1,53 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test/cache artifacts
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+htmlcov/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+.user.yml
+
+# Local temp/log files
+.tmp/
+tmp/
+logs/
+*.log
+docs/
+
+# dbt artifacts
+target/
+dbt_packages/
+logs/dbt.log
+
+# Local data artifacts
+bitcoin_pipeline/data/bronze/
+bitcoin_pipeline/data/**/*.parquet
+bitcoin_pipeline/data/**/*.duckdb
+bitcoin_pipeline/data/**/*.duckdb.wal
+
+# Streamlit local state
+.streamlit/secrets.toml
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Local agent instructions
+AGENTS.md
+CLAUDE.md

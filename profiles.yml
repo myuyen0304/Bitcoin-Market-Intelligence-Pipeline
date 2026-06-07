@@ -1,0 +1,7 @@
+bitcoin_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', 'bitcoin_pipeline/data/bitcoin_pipeline.duckdb') }}"
+      threads: 4
