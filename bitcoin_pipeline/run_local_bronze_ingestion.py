@@ -5,8 +5,8 @@ Fetches Bitcoin market data from CoinGecko, Binance, and Fear & Greed Index,
 validates each DataFrame against the Bronze schema, writes Hive-partitioned
 Parquet files to bitcoin_pipeline/data/bronze/, then prints a run summary.
 
-Writer note: write_local_parquet() is intentionally local-only. The S3-compatible
-equivalent (S3Writer) is used in Phase 2+ when MinIO/AWS is available.
+Writer note: writes go through write_bronze(), which lands on local disk by
+default and on MinIO/S3 when S3_ENDPOINT_URL is set — same code either way.
 """
 
 import logging
@@ -25,7 +25,7 @@ if str(PROJECT_DIR) not in sys.path:
 from ingestion.sources.binance import BinanceFetcher
 from ingestion.sources.coingecko import CoinGeckoFetcher
 from ingestion.sources.fear_greed import FearGreedFetcher
-from ingestion.utils.local_writer import write_local_parquet
+from ingestion.utils.bronze_writer import write_bronze
 
 logging.basicConfig(
     level=logging.INFO,
@@ -149,7 +149,6 @@ def _extract_ts(df: pd.DataFrame, time_col: str) -> tuple[str, str]:
 def main() -> None:
     """Fetch real API data, validate, write local Bronze Parquet, print summary."""
     run_date = datetime.now(timezone.utc)
-    data_dir = PROJECT_DIR / "data"
 
     logger.info("=" * 60)
     logger.info("Bronze local ingestion started at %s", run_date.strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -169,7 +168,7 @@ def main() -> None:
             r_cg.errors = errs
             logger.error("[coingecko] Validation failed: %s", errs)
         else:
-            path = write_local_parquet(df, "coingecko", "market_chart", data_dir, run_date)
+            path = write_bronze(df, "coingecko", "market_chart", run_date)
             r_cg.status = "PASS"
             r_cg.row_count = len(df)
             r_cg.min_ts, r_cg.max_ts = _extract_ts(df, spec_cg.time_col)
@@ -193,7 +192,7 @@ def main() -> None:
             r_b1d.errors = errs
             logger.error("[binance] klines_1d validation failed: %s", errs)
         else:
-            path = write_local_parquet(df, "binance", "klines_1d", data_dir, run_date)
+            path = write_bronze(df, "binance", "klines_1d", run_date)
             r_b1d.status = "PASS"
             r_b1d.row_count = len(df)
             r_b1d.min_ts, r_b1d.max_ts = _extract_ts(df, spec_b.time_col)
@@ -217,7 +216,7 @@ def main() -> None:
             r_b1h.errors = errs
             logger.error("[binance] klines_1h validation failed: %s", errs)
         else:
-            path = write_local_parquet(df, "binance", "klines_1h", data_dir, run_date)
+            path = write_bronze(df, "binance", "klines_1h", run_date)
             r_b1h.status = "PASS"
             r_b1h.row_count = len(df)
             r_b1h.min_ts, r_b1h.max_ts = _extract_ts(df, spec_b1h.time_col)
@@ -241,7 +240,7 @@ def main() -> None:
             r_fg.errors = errs
             logger.error("[feargreed] Validation failed: %s", errs)
         else:
-            path = write_local_parquet(df, "feargreed", "index", data_dir, run_date)
+            path = write_bronze(df, "feargreed", "index", run_date)
             r_fg.status = "PASS"
             r_fg.row_count = len(df)
             r_fg.min_ts, r_fg.max_ts = _extract_ts(df, spec_fg.time_col)
