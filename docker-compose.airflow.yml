@@ -31,6 +31,19 @@ x-airflow-common: &airflow-common
     # local Bronze + duckdb land here (shared with the dashboard on the host)
     DATA_DIR: /opt/airflow/project/bitcoin_pipeline/data
     DUCKDB_PATH: /opt/airflow/project/bitcoin_pipeline/data/bitcoin_pipeline.duckdb
+    # Bronze storage target: point ingestion + dbt at the bundled MinIO service.
+    # This flips both the Python writer (write_bronze) and the dbt bronze_path
+    # macro over to S3; DBT_TARGET=minio selects the httpfs dbt profile.
+    S3_ENDPOINT_URL: http://minio:9000
+    S3_BUCKET: bitcoin-pipeline-bronze
+    AWS_ACCESS_KEY_ID: minioadmin
+    AWS_SECRET_ACCESS_KEY: minioadmin
+    AWS_REGION: ap-southeast-1
+    DBT_TARGET: minio
+    # dbt + Cosmos phone home to scarf.sh after each task for anonymous usage
+    # metrics. The container has no reliable outbound internet, so each call
+    # blocks 3-20s until it times out — killing DAG throughput. Opt out.
+    DO_NOT_TRACK: "1"
   volumes:
     - ./:/opt/airflow/project
     - airflow-logs:/opt/airflow/logs
@@ -39,6 +52,38 @@ x-airflow-common: &airflow-common
       condition: service_healthy
 
 services:
+  # S3-compatible object storage for the Bronze data lake (local stand-in for AWS S3).
+  #   API  : http://localhost:9000   Console: http://localhost:9001  (minioadmin/minioadmin)
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    restart: always
+
+  # One-off: wait for MinIO, then create the Bronze bucket (idempotent), then exit.
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 minioadmin minioadmin; do
+          echo "waiting for minio..."; sleep 2;
+        done
+        mc mb --ignore-existing local/bitcoin-pipeline-bronze
+        echo "bucket ready"
+    restart: on-failure
+
   postgres:
     image: postgres:16
     environment:
@@ -77,6 +122,8 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
 
   airflow-webserver:
     <<: *airflow-common
@@ -89,7 +136,10 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
 
 volumes:
   postgres-db:
   airflow-logs:
+  minio-data:
