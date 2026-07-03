@@ -1,7 +1,26 @@
 bitcoin_pipeline:
   target: dev
   outputs:
+    # Local disk warehouse — reads Bronze from the local data/ tree. Kept free of
+    # the httpfs extension so local dbt runs need no network to install it.
     dev:
       type: duckdb
       path: "{{ env_var('DUCKDB_PATH', 'bitcoin_pipeline/data/bitcoin_pipeline.duckdb') }}"
       threads: 4
+
+    # MinIO / S3 warehouse — same local DuckDB file, but reads Bronze from S3 via
+    # the httpfs extension. Used by the Airflow stack (DBT_TARGET=minio).
+    minio:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', 'bitcoin_pipeline/data/bitcoin_pipeline.duckdb') }}"
+      threads: 4
+      extensions:
+        - httpfs
+      settings:
+        s3_region: "{{ env_var('AWS_REGION', 'ap-southeast-1') }}"
+        # DuckDB wants host:port with no scheme; strip it off S3_ENDPOINT_URL.
+        s3_endpoint: "{{ env_var('S3_ENDPOINT_URL', 'http://minio:9000').replace('https://', '').replace('http://', '') }}"
+        s3_access_key_id: "{{ env_var('AWS_ACCESS_KEY_ID', '') }}"
+        s3_secret_access_key: "{{ env_var('AWS_SECRET_ACCESS_KEY', '') }}"
+        s3_url_style: path   # MinIO uses path-style addressing, not virtual-host
+        s3_use_ssl: false    # http endpoint inside the Docker network
