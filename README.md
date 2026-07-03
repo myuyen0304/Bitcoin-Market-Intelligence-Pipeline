@@ -37,7 +37,6 @@ bitcoin_pipeline/
   dbt/models/marts/        Gold business marts
   dashboard/app.py         Streamlit dashboard reading Gold marts only
   dags/                    Existing Airflow daily ingestion DAG
-  target.md                Architecture, schema, and progress source of truth
 ```
 
 ## Setup
@@ -87,6 +86,31 @@ After Bronze and dbt have produced `bitcoin_pipeline/data/bitcoin_pipeline.duckd
 ```powershell
 docker compose up --build dashboard
 ```
+
+## Orchestration with Airflow (Docker)
+
+Run the whole pipeline — 3 parallel ingestions -> Bronze validation -> `dbt build`
+— on a local Airflow (LocalExecutor + Postgres) instead of running each step by hand:
+
+```powershell
+docker compose -f docker-compose.airflow.yml build
+docker compose -f docker-compose.airflow.yml up airflow-init   # one-off: metadata DB + admin user
+docker compose -f docker-compose.airflow.yml up -d
+```
+
+Open the Airflow UI at `http://localhost:8080` (login `admin` / `admin`), enable the
+`btc_daily_ingestion` DAG, and trigger it. Tear down with:
+
+```powershell
+docker compose -f docker-compose.airflow.yml down
+```
+
+Notes:
+
+- dbt runs in an isolated venv inside the image, so its dependencies never conflict
+  with Airflow's own pinned packages.
+- Bronze Parquet and the DuckDB database are written under `bitcoin_pipeline/data/`,
+  the same folder the dashboard reads.
 
 ## Output Contract
 

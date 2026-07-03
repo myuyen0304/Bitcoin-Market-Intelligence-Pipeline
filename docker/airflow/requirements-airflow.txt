@@ -1,0 +1,14 @@
+# Ingestion runtime deps for the Airflow environment.
+# Kept intentionally minimal (no dbt, no streamlit, no boto3) so nothing here
+# clashes with Airflow's own pinned dependencies. dbt lives in its own venv,
+# see docker/airflow/Dockerfile.
+requests>=2.32,<3
+pandas>=2.2,<3
+pyarrow>=16,<21
+python-dotenv>=1.0,<2
+websocket-client>=1.8,<2
+
+# Cosmos renders the dbt project into one Airflow task per model/test. It runs
+# in Airflow's env but calls dbt via SUBPROCESS against /opt/dbt-venv, so dbt's
+# own deps stay isolated (astronomer-cosmos itself does NOT pull in dbt-core).
+astronomer-cosmos>=1.7,<2
