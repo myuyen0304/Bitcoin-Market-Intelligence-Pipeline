@@ -25,7 +25,6 @@ htmlcov/
 tmp/
 logs/
 *.log
-docs/
 
 # dbt artifacts
 target/
