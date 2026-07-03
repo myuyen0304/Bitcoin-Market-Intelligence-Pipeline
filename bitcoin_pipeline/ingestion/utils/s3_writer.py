@@ -16,9 +16,33 @@ logger = logging.getLogger(__name__)
 
 
 class S3Writer:
-    def __init__(self, bucket: str, region: str = "ap-southeast-1"):
+    def __init__(
+        self,
+        bucket: str,
+        region: str = "ap-southeast-1",
+        endpoint_url: str | None = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+    ):
+        """Create an S3 (or S3-compatible, e.g. MinIO) Parquet writer.
+
+        Args:
+            bucket: Target bucket name.
+            region: AWS region for the client.
+            endpoint_url: Custom S3 endpoint. Set this to point at MinIO
+                (e.g. ``http://minio:9000``); leave ``None`` for real AWS S3.
+            aws_access_key_id: Access key; ``None`` falls back to boto3's default
+                credential chain (env vars, IAM role, ...).
+            aws_secret_access_key: Secret key; ``None`` falls back to the chain.
+        """
         self.bucket = bucket
-        self.client = boto3.client("s3", region_name=region)
+        self.client = boto3.client(
+            "s3",
+            region_name=region,
+            endpoint_url=endpoint_url,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+        )
 
     def write_parquet(
         self,
