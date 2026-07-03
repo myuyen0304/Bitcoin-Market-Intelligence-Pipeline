@@ -2,38 +2,46 @@
 DAG: btc_daily_ingestion
 ------------------------
 Runs every day at 02:00 UTC (after all markets settle for the day).
-Fetches yesterday's data from all 3 sources and lands to S3 Bronze.
+Fetches yesterday's data from all 3 sources, lands to the local Bronze layer,
+then builds the dbt Silver/Gold models.
 
 DAG structure:
-    start
-      ├── ingest_coingecko  ─┐
-      ├── ingest_binance    ─┼── validate_bronze ── end
-      └── ingest_fear_greed ─┘
+    ingest_coingecko  ─┐
+    ingest_binance    ─┼── validate_bronze ── dbt_build
+    ingest_fear_greed ─┘
 
 Design decisions:
   - 3 ingestion tasks run in PARALLEL (no dependency between sources)
-  - validate_bronze runs AFTER all 3 complete (uses TaskGroup + trigger_rule)
+  - validate_bronze runs AFTER all 3 complete (trigger_rule=all_success)
+  - dbt_build runs AFTER Bronze is validated (ingest -> transform end-to-end)
+  - Writes to local Bronze via local_writer; MinIO/S3 comes in a later phase
+  - Config (data dir) comes from config.settings, not hardcoded values
   - Uses logical_date for idempotent backfill support
-  - XCom passes S3 paths downstream for lineage tracking
+  - XCom passes written paths downstream for lineage tracking
 """
 
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from airflow import DAG
+from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
-# These will resolve at runtime in the Airflow container
+# These will resolve at runtime in the Airflow container (PYTHONPATH = bitcoin_pipeline)
+from config.settings import settings
 from ingestion.sources.binance import BinanceFetcher
 from ingestion.sources.coingecko import CoinGeckoFetcher
 from ingestion.sources.fear_greed import FearGreedFetcher
-from ingestion.utils.s3_writer import S3Writer
+from ingestion.utils.local_writer import write_local_parquet
 
 logger = logging.getLogger(__name__)
 
-# ── Config (ideally from Airflow Variables or env) ──────────────────────
-S3_BUCKET = "bitcoin-pipeline-bronze"   # replace with your bucket
-AWS_REGION = "ap-southeast-1"
+# ── Paths ────────────────────────────────────────────────────────────────
+# Repo root = two levels up from this DAG file (bitcoin_pipeline/dags/..).
+# The dbt project (dbt_project.yml, profiles.yml) lives at the repo root.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = settings.data_dir   # local Bronze root; overridable via DATA_DIR env var
 
 DEFAULT_ARGS = {
     "owner": "uyen",
@@ -53,7 +61,6 @@ def ingest_coingecko(**context) -> str:
     Pushes S3 path to XCom for downstream tasks.
     """
     execution_date: datetime = context["logical_date"]
-    s3 = S3Writer(bucket=S3_BUCKET, region=AWS_REGION)
     fetcher = CoinGeckoFetcher()
 
     # Fetch 2 days to ensure we have yesterday's complete candle
@@ -67,13 +74,13 @@ def ingest_coingecko(**context) -> str:
         logger.warning(f"No CoinGecko data for {target_date} — possibly weekend/holiday gap")
         return ""
 
-    path = s3.write_parquet(
+    path = str(write_local_parquet(
         df=df,
-        layer="bronze",
         source="coingecko",
         dataset="market_chart",
-        date=execution_date,
-    )
+        base_dir=DATA_DIR,
+        partition_date=execution_date,
+    ))
 
     # Push to XCom so validate_bronze knows where to find data
     context["ti"].xcom_push(key="coingecko_s3_path", value=path)
@@ -87,7 +94,6 @@ def ingest_binance(**context) -> str:
     Fetches both 1d and 1h intervals for richer analysis.
     """
     execution_date: datetime = context["logical_date"]
-    s3 = S3Writer(bucket=S3_BUCKET, region=AWS_REGION)
     fetcher = BinanceFetcher()
 
     target_date = execution_date.date()
@@ -96,22 +102,22 @@ def ingest_binance(**context) -> str:
 
     # Daily candle
     df_daily = fetcher.fetch(symbol="BTCUSDT", interval="1d", start=start, end=end)
-    path = s3.write_parquet(
+    path = str(write_local_parquet(
         df=df_daily,
-        layer="bronze",
         source="binance",
         dataset="klines_1d",
-        date=execution_date,
-    )
+        base_dir=DATA_DIR,
+        partition_date=execution_date,
+    ))
 
     # Hourly candles (richer for analysis)
     df_hourly = fetcher.fetch(symbol="BTCUSDT", interval="1h", start=start, end=end)
-    s3.write_parquet(
+    write_local_parquet(
         df=df_hourly,
-        layer="bronze",
         source="binance",
         dataset="klines_1h",
-        date=execution_date,
+        base_dir=DATA_DIR,
+        partition_date=execution_date,
     )
 
     context["ti"].xcom_push(key="binance_s3_path", value=path)
@@ -122,19 +128,18 @@ def ingest_binance(**context) -> str:
 def ingest_fear_greed(**context) -> str:
     """Fetch today's Fear & Greed Index value."""
     execution_date: datetime = context["logical_date"]
-    s3 = S3Writer(bucket=S3_BUCKET, region=AWS_REGION)
     fetcher = FearGreedFetcher()
 
     latest = fetcher.fetch_latest()
     df = __import__("pandas").DataFrame([latest])
 
-    path = s3.write_parquet(
+    path = str(write_local_parquet(
         df=df,
-        layer="bronze",
         source="feargreed",
         dataset="index",
-        date=execution_date,
-    )
+        base_dir=DATA_DIR,
+        partition_date=execution_date,
+    ))
 
     context["ti"].xcom_push(key="feargreed_s3_path", value=path)
     logger.info(f"Fear & Greed ingestion complete: {path}")
@@ -202,5 +207,11 @@ with DAG(
         trigger_rule="all_success",   # only run if ALL 3 ingestions pass
     )
 
-    # 3 ingestions run in parallel, validation waits for all
-    [t_coingecko, t_binance, t_fear_greed] >> t_validate
+    # Transform Bronze -> Silver/Gold with dbt (run + test in one DAG-aware pass)
+    t_dbt_build = BashOperator(
+        task_id="dbt_build",
+        bash_command=f"cd '{PROJECT_ROOT}' && dbt build --profiles-dir '{PROJECT_ROOT}'",
+    )
+
+    # 3 ingestions run in parallel -> validate -> dbt build
+    [t_coingecko, t_binance, t_fear_greed] >> t_validate >> t_dbt_build
