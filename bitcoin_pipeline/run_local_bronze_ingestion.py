@@ -25,6 +25,7 @@ if str(PROJECT_DIR) not in sys.path:
 from ingestion.sources.binance import BinanceFetcher
 from ingestion.sources.coingecko import CoinGeckoFetcher
 from ingestion.sources.fear_greed import FearGreedFetcher
+from ingestion.utils.local_writer import write_local_parquet
 
 logging.basicConfig(
     level=logging.INFO,
@@ -114,35 +115,6 @@ def validate_dataframe(df: pd.DataFrame, spec: DatasetSpec) -> list[str]:
             errors.append(f"Column '{spec.time_col}' is not a datetime type (got {df[spec.time_col].dtype})")
 
     return errors
-
-
-# ---------------------------------------------------------------------------
-# Local Parquet writer (Bronze local only — replaced by S3Writer in Phase 2+)
-# ---------------------------------------------------------------------------
-
-def write_local_parquet(
-    df: pd.DataFrame,
-    source: str,
-    dataset: str,
-    base_dir: Path,
-    partition_date: datetime,
-) -> Path:
-    """Write a DataFrame to local Bronze storage using Hive-style partitions."""
-    output_dir = (
-        base_dir
-        / "bronze"
-        / source
-        / dataset
-        / f"year={partition_date.year}"
-        / f"month={partition_date.month:02d}"
-        / f"day={partition_date.day:02d}"
-    )
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    output_path = output_dir / f"{dataset}_{partition_date:%Y%m%d_%H%M%S}.parquet"
-    df.to_parquet(output_path, index=False, engine="pyarrow")
-    logger.info("Written %d rows -> %s", len(df), output_path)
-    return output_path
 
 
 # ---------------------------------------------------------------------------
