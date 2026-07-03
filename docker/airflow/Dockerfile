@@ -17,5 +17,8 @@ RUN python -m venv /opt/dbt-venv \
     && /opt/dbt-venv/bin/pip install --no-cache-dir --upgrade pip \
     && /opt/dbt-venv/bin/pip install --no-cache-dir \
         "dbt-core>=1.8,<2" "dbt-duckdb>=1.8,<2" "duckdb>=1.0,<2" \
+    # Pre-install the DuckDB httpfs extension so dbt can read Bronze from MinIO/S3
+    # at run time without a network round-trip (and offline).
+    && /opt/dbt-venv/bin/python -c "import duckdb; duckdb.connect().execute('INSTALL httpfs')" \
     && chown -R airflow: /opt/dbt-venv
 USER airflow
