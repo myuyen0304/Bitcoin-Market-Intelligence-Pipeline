@@ -1,7 +1,7 @@
 """
 DAG: btc_daily_ingestion
 ------------------------
-Runs every day at 02:00 UTC (after all markets settle for the day).
+Runs every day at 08:30 Vietnam time (Asia/Ho_Chi_Minh).
 Fetches yesterday's data from all 3 sources, lands to the local Bronze layer,
 then builds the dbt Silver/Gold models.
 
@@ -22,12 +22,20 @@ Design decisions:
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
+import pendulum
 from airflow import DAG
-from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
+from cosmos import (
+    DbtTaskGroup,
+    ExecutionConfig,
+    ProfileConfig,
+    ProjectConfig,
+    RenderConfig,
+)
+from cosmos.constants import ExecutionMode, InvocationMode, LoadMode
 
 # These will resolve at runtime in the Airflow container (PYTHONPATH = bitcoin_pipeline)
 from config.settings import settings
@@ -47,6 +55,55 @@ DATA_DIR = settings.data_dir   # local Bronze root; overridable via DATA_DIR env
 # dbt binary: in the Airflow container dbt lives in an isolated venv (set via
 # DBT_BIN); falls back to `dbt` on PATH for local runs.
 DBT_BIN = os.environ.get("DBT_BIN", "dbt")
+
+# ── Cosmos (dbt → Airflow tasks) ─────────────────────────────────────────
+# Cosmos renders each dbt model/test into its own Airflow task so the dbt DAG
+# shows up inside the Airflow Graph (per-model retry + lineage), instead of one
+# opaque `dbt build` shell command.
+#
+# Key choices for THIS project:
+#   - ExecutionMode.LOCAL + InvocationMode.SUBPROCESS + dbt_executable_path=DBT_BIN
+#     → Cosmos runs in Airflow's env but shells out to the isolated /opt/dbt-venv,
+#       so dbt's deps never leak into Airflow's env.
+#   - profiles_yml_filepath reuses the repo's profiles.yml (dbt-duckdb) — no need
+#     for an Airflow connection.
+#   - LoadMode.DBT_MANIFEST → Cosmos builds the task graph by reading the dbt
+#     manifest (target/manifest.json) at parse time. We do NOT use LoadMode.DBT_LS
+#     here because `dbt_project_path` is the whole repo root: Cosmos would copy
+#     and hash the entire repo (.git, .venv, data/, target/) on every parse and
+#     blow past the DAG import timeout. The manifest is regenerated on every run
+#     by the dbt tasks themselves (and by any local `dbt build`/`dbt parse`).
+DBT_PROFILES_YML = PROJECT_ROOT / "profiles.yml"
+DBT_MANIFEST = PROJECT_ROOT / "target" / "manifest.json"
+
+dbt_project_config = ProjectConfig(
+    dbt_project_path=PROJECT_ROOT,   # dbt_project.yml lives at the repo root
+    project_name="bitcoin_pipeline",
+    # Our dbt_project.yml sets a custom model-paths; Cosmos otherwise looks for
+    # a top-level models/ dir and fails validation. Point it at the real path.
+    models_relative_path="bitcoin_pipeline/dbt/models",
+    # Build the Airflow task graph from this manifest instead of running dbt ls.
+    manifest_path=DBT_MANIFEST,
+    # No packages.yml in this project → skip `dbt deps` (one less subprocess).
+    install_dbt_deps=False,
+)
+dbt_profile_config = ProfileConfig(
+    profile_name="bitcoin_pipeline",
+    target_name="dev",
+    profiles_yml_filepath=DBT_PROFILES_YML,
+)
+dbt_execution_config = ExecutionConfig(
+    execution_mode=ExecutionMode.LOCAL,
+    invocation_mode=InvocationMode.SUBPROCESS,
+    dbt_executable_path=DBT_BIN,
+)
+dbt_render_config = RenderConfig(
+    load_method=LoadMode.DBT_MANIFEST,
+    # dbt is not importable in Airflow's own env; SUBPROCESS avoids the DBT_RUNNER
+    # code path (which would require dbt installed alongside Airflow).
+    invocation_mode=InvocationMode.SUBPROCESS,
+    dbt_executable_path=DBT_BIN,
+)
 
 DEFAULT_ARGS = {
     "owner": "uyen",
@@ -184,8 +241,8 @@ with DAG(
     dag_id="btc_daily_ingestion",
     description="Fetch Bitcoin data from CoinGecko, Binance, Fear&Greed → S3 Bronze",
     default_args=DEFAULT_ARGS,
-    start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
-    schedule="0 2 * * *",            # 02:00 UTC daily
+    start_date=pendulum.datetime(2024, 1, 1, tz="Asia/Ho_Chi_Minh"),
+    schedule="30 8 * * *",           # 08:30 giờ VN (Asia/Ho_Chi_Minh) mỗi ngày
     catchup=False,                   # don't backfill on first deploy
     tags=["bitcoin", "ingestion", "bronze"],
     max_active_runs=1,               # prevent overlapping runs
@@ -212,11 +269,21 @@ with DAG(
         trigger_rule="all_success",   # only run if ALL 3 ingestions pass
     )
 
-    # Transform Bronze -> Silver/Gold with dbt (run + test in one DAG-aware pass)
-    t_dbt_build = BashOperator(
-        task_id="dbt_build",
-        bash_command=f"cd '{PROJECT_ROOT}' && {DBT_BIN} build --profiles-dir '{PROJECT_ROOT}'",
+    # Transform Bronze -> Silver/Gold with dbt, rendered by Cosmos into one
+    # Airflow task per model/test (staging -> intermediate -> marts).
+    #
+    # DuckDB is a single-writer database: only ONE process may open the file for
+    # write at a time. The 3 staging models have no dependency between them, so
+    # Cosmos would otherwise run them in parallel -> DuckDB lock conflict. We pin
+    # every dbt task to the `duckdb_serial` pool (1 slot) to serialize them.
+    dbt_build = DbtTaskGroup(
+        group_id="dbt_build",
+        project_config=dbt_project_config,
+        profile_config=dbt_profile_config,
+        execution_config=dbt_execution_config,
+        render_config=dbt_render_config,
+        operator_args={"pool": "duckdb_serial"},
     )
 
-    # 3 ingestions run in parallel -> validate -> dbt build
-    [t_coingecko, t_binance, t_fear_greed] >> t_validate >> t_dbt_build
+    # 3 ingestions run in parallel -> validate -> dbt (per-model task group)
+    [t_coingecko, t_binance, t_fear_greed] >> t_validate >> dbt_build

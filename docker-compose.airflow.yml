@@ -20,6 +20,10 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/project/bitcoin_pipeline/dags
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    # Cosmos runs `dbt ls` while parsing the DAG; the cold first parse can exceed
+    # the default 30s/50s limits, so give the parser more headroom.
+    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: "120"
+    AIRFLOW__CORE__DAG_FILE_PROCESSOR_TIMEOUT: "120"
     # Import path for the project packages (config, ingestion, ...)
     PYTHONPATH: /opt/airflow/project/bitcoin_pipeline
     # dbt lives in an isolated venv inside the image
