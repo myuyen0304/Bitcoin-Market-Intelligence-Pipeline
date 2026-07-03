@@ -21,6 +21,7 @@ Design decisions:
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -42,6 +43,10 @@ logger = logging.getLogger(__name__)
 # The dbt project (dbt_project.yml, profiles.yml) lives at the repo root.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = settings.data_dir   # local Bronze root; overridable via DATA_DIR env var
+
+# dbt binary: in the Airflow container dbt lives in an isolated venv (set via
+# DBT_BIN); falls back to `dbt` on PATH for local runs.
+DBT_BIN = os.environ.get("DBT_BIN", "dbt")
 
 DEFAULT_ARGS = {
     "owner": "uyen",
@@ -210,7 +215,7 @@ with DAG(
     # Transform Bronze -> Silver/Gold with dbt (run + test in one DAG-aware pass)
     t_dbt_build = BashOperator(
         task_id="dbt_build",
-        bash_command=f"cd '{PROJECT_ROOT}' && dbt build --profiles-dir '{PROJECT_ROOT}'",
+        bash_command=f"cd '{PROJECT_ROOT}' && {DBT_BIN} build --profiles-dir '{PROJECT_ROOT}'",
     )
 
     # 3 ingestions run in parallel -> validate -> dbt build
