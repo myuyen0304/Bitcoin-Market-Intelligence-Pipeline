@@ -56,7 +56,7 @@ if price_df.empty:
     st.stop()
 
 latest = price_df.sort_values("date_day").iloc[-1]
-latest_anomalies = anomaly_df[anomaly_df["is_volume_anomaly"] == True].sort_values("date_day", ascending=False)
+latest_anomalies = anomaly_df[anomaly_df["is_volume_anomaly"]].sort_values("date_day", ascending=False)
 latest_freshness = price_df["latest_ingested_at"].max()
 
 st.title("Bitcoin Market Intelligence")
