@@ -1,5 +1,9 @@
 # Bitcoin Market Intelligence Pipeline
 
+[![CI](https://github.com/myuyen0304/Bitcoin-Market-Intelligence-Pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/myuyen0304/Bitcoin-Market-Intelligence-Pipeline/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+![dbt](https://img.shields.io/badge/dbt-DuckDB-FF694B.svg)
+
 Local-first Data Engineering portfolio project for Bitcoin market analytics.
 
 ## What This Project Shows
