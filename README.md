@@ -37,7 +37,6 @@ bitcoin_pipeline/
   dbt/models/marts/        Gold business marts
   dashboard/app.py         Streamlit dashboard reading Gold marts only
   dags/                    Existing Airflow daily ingestion DAG
-  target.md                Architecture, schema, and progress source of truth
 ```
 
 ## Setup
