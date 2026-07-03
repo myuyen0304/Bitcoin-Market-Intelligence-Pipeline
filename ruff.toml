@@ -1,0 +1,12 @@
+# Ruff configuration for the Bitcoin data pipeline.
+# Keeps the default lint set (pyflakes F + pycodestyle E4/E7/E9) which
+# catches real bugs without being noisy about style.
+
+target-version = "py311"
+
+[lint.per-file-ignores]
+# These entrypoints intentionally insert the project root onto sys.path
+# BEFORE importing the local `ingestion`/`bitcoin_pipeline` packages, so
+# their module-level imports cannot all sit at the very top of the file.
+"bitcoin_pipeline/run_local_bronze_ingestion.py" = ["E402"]
+"bitcoin_pipeline/dashboard/app.py" = ["E402"]

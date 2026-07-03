@@ -6,7 +6,7 @@ Follows Hive-style partitioning: s3://bucket/layer/source/year=YYYY/month=MM/day
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 
 import boto3
@@ -34,7 +34,7 @@ class S3Writer:
         Returns the full S3 path written.
         """
         if date is None:
-            date = datetime.utcnow()
+            date = datetime.now(timezone.utc)
 
         # Hive partition path
         s3_key = (
@@ -55,7 +55,7 @@ class S3Writer:
             Metadata={
                 "source": source,
                 "dataset": dataset,
-                "ingested_at": datetime.utcnow().isoformat(),
+                "ingested_at": datetime.now(timezone.utc).isoformat(),
                 "row_count": str(len(df)),
             },
         )

@@ -13,7 +13,7 @@ DAG structure:
 Design decisions:
   - 3 ingestion tasks run in PARALLEL (no dependency between sources)
   - validate_bronze runs AFTER all 3 complete (uses TaskGroup + trigger_rule)
-  - Uses execution_date for idempotent backfill support
+  - Uses logical_date for idempotent backfill support
   - XCom passes S3 paths downstream for lineage tracking
 """
 
@@ -22,7 +22,6 @@ from datetime import datetime, timedelta, timezone
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
 
 # These will resolve at runtime in the Airflow container
 from ingestion.sources.binance import BinanceFetcher
@@ -53,7 +52,7 @@ def ingest_coingecko(**context) -> str:
     Fetch daily CoinGecko price + market cap + volume for execution date.
     Pushes S3 path to XCom for downstream tasks.
     """
-    execution_date: datetime = context["execution_date"]
+    execution_date: datetime = context["logical_date"]
     s3 = S3Writer(bucket=S3_BUCKET, region=AWS_REGION)
     fetcher = CoinGeckoFetcher()
 
@@ -87,7 +86,7 @@ def ingest_binance(**context) -> str:
     Fetch Binance daily klines for execution date.
     Fetches both 1d and 1h intervals for richer analysis.
     """
-    execution_date: datetime = context["execution_date"]
+    execution_date: datetime = context["logical_date"]
     s3 = S3Writer(bucket=S3_BUCKET, region=AWS_REGION)
     fetcher = BinanceFetcher()
 
@@ -122,7 +121,7 @@ def ingest_binance(**context) -> str:
 
 def ingest_fear_greed(**context) -> str:
     """Fetch today's Fear & Greed Index value."""
-    execution_date: datetime = context["execution_date"]
+    execution_date: datetime = context["logical_date"]
     s3 = S3Writer(bucket=S3_BUCKET, region=AWS_REGION)
     fetcher = FearGreedFetcher()
 
@@ -148,7 +147,7 @@ def validate_bronze(**context) -> None:
     Checks:
       1. All 3 XCom paths are non-empty (all tasks succeeded)
       2. Row counts are non-zero
-      3. Dates match execution_date (no stale data)
+      3. Dates match logical_date (no stale data)
 
     In production: replace with Great Expectations suite.
     """
@@ -175,8 +174,8 @@ with DAG(
     dag_id="btc_daily_ingestion",
     description="Fetch Bitcoin data from CoinGecko, Binance, Fear&Greed → S3 Bronze",
     default_args=DEFAULT_ARGS,
-    start_date=days_ago(1),
-    schedule_interval="0 2 * * *",   # 02:00 UTC daily
+    start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    schedule="0 2 * * *",            # 02:00 UTC daily
     catchup=False,                   # don't backfill on first deploy
     tags=["bitcoin", "ingestion", "bronze"],
     max_active_runs=1,               # prevent overlapping runs

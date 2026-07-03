@@ -11,7 +11,6 @@ Usage:
 
 import sys
 import traceback
-from datetime import datetime
 
 import pandas as pd
 import requests
