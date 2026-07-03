@@ -72,14 +72,22 @@ class FearGreedFetcher(BaseFetcher):
         """
         Fetch only today's value — used in incremental Airflow runs.
         Returns a single dict (not a DataFrame).
+
+        The keys MUST match the schema produced by :meth:`fetch` (and expected by
+        ``stg_fear_greed_index``): ``fear_greed_value`` and ``sentiment_bucket``.
+        A previous version emitted a raw ``value`` column with no bucket, which
+        only worked locally because ``union_by_name`` merged it with the runner's
+        well-formed files — it broke once Bronze moved to a clean S3 bucket.
         """
         raw = self.get("/fng/", params={"limit": 1, "format": "json"})
         entry = raw["data"][0]
+        value = int(entry["value"])
         return {
             "date": datetime.fromtimestamp(int(entry["timestamp"]), tz=timezone.utc).date(),
-            "value": int(entry["value"]),
+            "fear_greed_value": value,
             "sentiment_label": entry["value_classification"],
-            "ingested_at": datetime.now(timezone.utc).isoformat(),
+            "sentiment_bucket": classify_sentiment(value),
+            "ingested_at": datetime.now(timezone.utc),
         }
 
     # ------------------------------------------------------------------ #
