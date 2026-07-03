@@ -205,6 +205,12 @@ Lý do: Athena và Spark đọc nhanh hơn nhờ **partition pruning** — chỉ
   - Thêm dbt tests cho not-null, accepted interval values, Fear & Greed range, price/volume sanity
   - Thêm Streamlit dashboard đọc Gold marts, không đọc trực tiếp Bronze raw files
   - Thêm Dockerfile và `docker-compose.yml` cho dashboard local demo
+- [x] **Phase A — Repo hygiene & CI/CD** (nền tảng cho portfolio trên GitHub)
+  - Sửa `.gitignore`: bỏ dòng `docs/` (trước đó vô tình ignore toàn bộ tài liệu portfolio, không hiện trên GitHub)
+  - Fix deprecated `datetime.utcnow()` → `datetime.now(timezone.utc)` trong `s3_writer.py`
+  - Fix deprecated Airflow API trong `btc_daily_ingestion.py`: `days_ago`→`start_date` có tz, `schedule_interval`→`schedule`, `execution_date`→`logical_date`
+  - Thêm GitHub Actions CI (`.github/workflows/ci.yml`): ruff lint + compileall + `dbt parse` (không phụ thuộc API ngoài nên ổn định)
+  - Thêm `ruff.toml`; dọn import thừa và `== True` — ruff sạch, compileall OK, dbt parse OK
 
 ### 🔲 Next — làm theo thứ tự này
 1. **Verify local analytics MVP end-to-end**: install new dependencies, run Bronze ingestion, `dbt run`, `dbt test`, and open Streamlit
