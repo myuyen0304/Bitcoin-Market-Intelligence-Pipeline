@@ -105,12 +105,20 @@ Open the Airflow UI at `http://localhost:8080` (login `admin` / `admin`), enable
 docker compose -f docker-compose.airflow.yml down
 ```
 
+The stack also bundles a **MinIO** service (S3-compatible object storage) as a local
+stand-in for AWS S3. When run this way the pipeline writes Bronze to MinIO and dbt
+reads it back over S3 (`httpfs`), so the flow exercises a real object-store path
+without any cloud cost. Browse the objects in the MinIO console at
+`http://localhost:9001` (login `minioadmin` / `minioadmin`).
+
 Notes:
 
 - dbt runs in an isolated venv inside the image, so its dependencies never conflict
   with Airflow's own pinned packages.
-- Bronze Parquet and the DuckDB database are written under `bitcoin_pipeline/data/`,
-  the same folder the dashboard reads.
+- Bronze storage is config-driven via `S3_ENDPOINT_URL`: the Airflow stack sets it to
+  MinIO, while running scripts directly on the host (empty value) keeps Bronze on local
+  disk under `bitcoin_pipeline/data/`. The DuckDB warehouse always stays local, so the
+  dashboard is unaffected either way.
 
 ## Output Contract
 
@@ -153,7 +161,7 @@ Current checks cover:
 - DuckDB keeps the demo simple while still using SQL transformation patterns close to warehouse work.
 - dbt models document lineage from raw API outputs to recruiter-visible metrics.
 - The dashboard is intentionally downstream-only: it queries Gold marts, not raw files.
-- Roadmap phases add MinIO/S3 compatibility, Airflow orchestration, Great Expectations, and cloud deployment after the MVP is working.
+- Airflow orchestration and MinIO/S3-compatible Bronze storage are in place; roadmap phases add Great Expectations, dbt docs/lineage, and real cloud (Terraform/AWS) deployment.
 
 ## Environment Variables
 
@@ -161,8 +169,9 @@ Current checks cover:
 |---|---|---|
 | `DATA_DIR` | Local data root for Bronze Parquet | `bitcoin_pipeline/data` |
 | `DUCKDB_PATH` | DuckDB database file path | `bitcoin_pipeline/data/bitcoin_pipeline.duckdb` |
-| `S3_BUCKET` | Future S3/MinIO bucket name | `bitcoin-pipeline-bronze` |
-| `AWS_REGION` | AWS region for future cloud resources | `ap-southeast-1` |
-| `S3_ENDPOINT_URL` | Optional MinIO/S3-compatible endpoint | empty |
-| `AWS_ACCESS_KEY_ID` | Optional AWS/MinIO access key | empty |
-| `AWS_SECRET_ACCESS_KEY` | Optional AWS/MinIO secret key | empty |
+| `S3_BUCKET` | Bronze bucket name on MinIO/S3 | `bitcoin-pipeline-bronze` |
+| `AWS_REGION` | AWS/MinIO region | `ap-southeast-1` |
+| `S3_ENDPOINT_URL` | MinIO/S3 endpoint; **empty = write/read Bronze on local disk** | empty |
+| `AWS_ACCESS_KEY_ID` | MinIO/S3 access key (required when endpoint is set) | empty |
+| `AWS_SECRET_ACCESS_KEY` | MinIO/S3 secret key (required when endpoint is set) | empty |
+| `DBT_TARGET` | dbt profile target: `dev` (local Bronze) or `minio` (S3 Bronze) | `dev` |
