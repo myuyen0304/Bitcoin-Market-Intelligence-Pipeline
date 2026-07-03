@@ -38,11 +38,10 @@ from cosmos import (
 from cosmos.constants import ExecutionMode, InvocationMode, LoadMode
 
 # These will resolve at runtime in the Airflow container (PYTHONPATH = bitcoin_pipeline)
-from config.settings import settings
 from ingestion.sources.binance import BinanceFetcher
 from ingestion.sources.coingecko import CoinGeckoFetcher
 from ingestion.sources.fear_greed import FearGreedFetcher
-from ingestion.utils.local_writer import write_local_parquet
+from ingestion.utils.bronze_writer import write_bronze
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +49,8 @@ logger = logging.getLogger(__name__)
 # Repo root = two levels up from this DAG file (bitcoin_pipeline/dags/..).
 # The dbt project (dbt_project.yml, profiles.yml) lives at the repo root.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = settings.data_dir   # local Bronze root; overridable via DATA_DIR env var
+# Bronze destination (local disk vs MinIO/S3) is decided inside write_bronze by
+# settings.s3_endpoint_url — the DAG stays agnostic to where Bronze lands.
 
 # dbt binary: in the Airflow container dbt lives in an isolated venv (set via
 # DBT_BIN); falls back to `dbt` on PATH for local runs.
@@ -89,7 +89,9 @@ dbt_project_config = ProjectConfig(
 )
 dbt_profile_config = ProfileConfig(
     profile_name="bitcoin_pipeline",
-    target_name="dev",
+    # `dev` reads Bronze from local disk; `minio` reads it from MinIO/S3 via
+    # httpfs. The Airflow stack sets DBT_TARGET=minio; local runs default to dev.
+    target_name=os.environ.get("DBT_TARGET", "dev"),
     profiles_yml_filepath=DBT_PROFILES_YML,
 )
 dbt_execution_config = ExecutionConfig(
@@ -136,13 +138,12 @@ def ingest_coingecko(**context) -> str:
         logger.warning(f"No CoinGecko data for {target_date} — possibly weekend/holiday gap")
         return ""
 
-    path = str(write_local_parquet(
+    path = write_bronze(
         df=df,
         source="coingecko",
         dataset="market_chart",
-        base_dir=DATA_DIR,
         partition_date=execution_date,
-    ))
+    )
 
     # Push to XCom so validate_bronze knows where to find data
     context["ti"].xcom_push(key="coingecko_s3_path", value=path)
@@ -164,21 +165,19 @@ def ingest_binance(**context) -> str:
 
     # Daily candle
     df_daily = fetcher.fetch(symbol="BTCUSDT", interval="1d", start=start, end=end)
-    path = str(write_local_parquet(
+    path = write_bronze(
         df=df_daily,
         source="binance",
         dataset="klines_1d",
-        base_dir=DATA_DIR,
         partition_date=execution_date,
-    ))
+    )
 
     # Hourly candles (richer for analysis)
     df_hourly = fetcher.fetch(symbol="BTCUSDT", interval="1h", start=start, end=end)
-    write_local_parquet(
+    write_bronze(
         df=df_hourly,
         source="binance",
         dataset="klines_1h",
-        base_dir=DATA_DIR,
         partition_date=execution_date,
     )
 
@@ -195,13 +194,12 @@ def ingest_fear_greed(**context) -> str:
     latest = fetcher.fetch_latest()
     df = __import__("pandas").DataFrame([latest])
 
-    path = str(write_local_parquet(
+    path = write_bronze(
         df=df,
         source="feargreed",
         dataset="index",
-        base_dir=DATA_DIR,
         partition_date=execution_date,
-    ))
+    )
 
     context["ti"].xcom_push(key="feargreed_s3_path", value=path)
     logger.info(f"Fear & Greed ingestion complete: {path}")
@@ -276,13 +274,23 @@ with DAG(
     # write at a time. The 3 staging models have no dependency between them, so
     # Cosmos would otherwise run them in parallel -> DuckDB lock conflict. We pin
     # every dbt task to the `duckdb_serial` pool (1 slot) to serialize them.
+    # Reading Bronze parquet from object storage (MinIO/S3) over httpfs can hit an
+    # occasional cold-cache miss (e.g. a transient "column not found" while the
+    # parquet footer is fetched). These clear on a quick re-read, so give dbt tasks
+    # a short, fixed retry instead of inheriting the DAG's 5-min exponential backoff
+    # (which would stall the whole run for many minutes on a blip).
     dbt_build = DbtTaskGroup(
         group_id="dbt_build",
         project_config=dbt_project_config,
         profile_config=dbt_profile_config,
         execution_config=dbt_execution_config,
         render_config=dbt_render_config,
-        operator_args={"pool": "duckdb_serial"},
+        operator_args={
+            "pool": "duckdb_serial",
+            "retries": 3,
+            "retry_delay": timedelta(seconds=20),
+            "retry_exponential_backoff": False,
+        },
     )
 
     # 3 ingestions run in parallel -> validate -> dbt (per-model task group)
