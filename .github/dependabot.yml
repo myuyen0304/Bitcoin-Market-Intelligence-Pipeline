@@ -1,0 +1,40 @@
+# Dependabot — GitHub's built-in dependency updater.
+# It scans the manifests below on a schedule and opens PRs to bump versions
+# (and security patches). Free, no setup beyond this file. Docs:
+# https://docs.github.com/code-security/dependabot
+
+version: 2
+updates:
+  # Root Python deps (dbt, boto3, ...) — the ones CI installs.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Bundle minor/patch bumps into one PR to cut noise.
+      python-minor:
+        update-types: ["minor", "patch"]
+
+  # Airflow Docker image Python deps.
+  - package-ecosystem: pip
+    directory: "/docker/airflow"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(airflow)"
+    groups:
+      airflow-minor:
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions used in .github/workflows (e.g. actions/checkout).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
