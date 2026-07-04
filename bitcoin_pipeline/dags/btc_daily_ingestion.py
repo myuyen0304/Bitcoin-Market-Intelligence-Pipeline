@@ -242,6 +242,7 @@ with DAG(
     start_date=pendulum.datetime(2024, 1, 1, tz="Asia/Ho_Chi_Minh"),
     schedule="30 8 * * *",           # 08:30 giờ VN (Asia/Ho_Chi_Minh) mỗi ngày
     catchup=False,                   # don't backfill on first deploy
+    is_paused_upon_creation=False,   # start unpaused (auto-run without manual toggle)
     tags=["bitcoin", "ingestion", "bronze"],
     max_active_runs=1,               # prevent overlapping runs
 ) as dag:
