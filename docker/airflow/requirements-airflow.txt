@@ -10,7 +10,7 @@ websocket-client>=1.8,<2
 # S3Writer (used by write_bronze) talks to MinIO/S3 via boto3. The DAG imports it
 # at parse time, so boto3 must live in Airflow's env. Pinned range does not clash
 # with Airflow 2.10.5's transitive botocore.
-boto3>=1.34,<2
+boto3>=1.43.40,<2
 
 # Cosmos renders the dbt project into one Airflow task per model/test. It runs
 # in Airflow's env but calls dbt via SUBPROCESS against /opt/dbt-venv, so dbt's
