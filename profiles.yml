@@ -24,3 +24,18 @@ bitcoin_pipeline:
         s3_secret_access_key: "{{ env_var('AWS_SECRET_ACCESS_KEY', '') }}"
         s3_url_style: path   # MinIO uses path-style addressing, not virtual-host
         s3_use_ssl: false    # http endpoint inside the Docker network
+
+# Profile used by the `edr` CLI (Elementary) to read the observability tables it
+# wrote into the `main_elementary` schema and render the HTML report. Same DuckDB
+# file as the pipeline; read-only for report generation.
+elementary:
+  target: default
+  outputs:
+    default:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', 'bitcoin_pipeline/data/bitcoin_pipeline.duckdb') }}"
+      # dbt-duckdb prefixes the custom schema with the target's default schema
+      # ("main"), so the elementary tables actually live in `main_elementary`.
+      # edr reads the profile schema verbatim, so point it there directly.
+      schema: main_elementary
+      threads: 4

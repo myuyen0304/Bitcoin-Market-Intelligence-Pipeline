@@ -31,6 +31,11 @@ target/
 dbt_packages/
 logs/dbt.log
 
+# Elementary (edr) artifacts — scratch dir + generated HTML report (5MB+, regenerated
+# on demand). Keep packages.yml / package-lock.yml tracked (they pin the dbt deps).
+edr_target/
+bitcoin_pipeline/reports/
+
 # Local data artifacts
 bitcoin_pipeline/data/bronze/
 bitcoin_pipeline/data/**/*.parquet

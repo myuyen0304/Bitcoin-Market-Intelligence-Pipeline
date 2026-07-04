@@ -43,17 +43,34 @@ models:
     description: Cleaned Silver table for Alternative.me Fear and Greed Index history.
     columns:
       - name: date_day
+        description: Daily grain — one row per day, enforced by the dedup in the model.
         tests:
           - not_null
+          - unique
       - name: fear_greed_value
         tests:
           - not_null
       - name: sentiment_label
+        description: Classification returned by the alternative.me API (external source).
         tests:
           - not_null
+          # External values — warn (don't fail the pipeline) if the API introduces
+          # a new label we haven't seen.
+          - accepted_values:
+              arguments:
+                values: ['Extreme Fear', 'Fear', 'Neutral', 'Greed', 'Extreme Greed']
+              config:
+                severity: warn
+      - name: sentiment_bucket
+        description: Our own numeric-range classification (classify_sentiment). We control it, so a stray value is an error.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Extreme Fear', 'Fear', 'Neutral', 'Greed', 'Extreme Greed']
 
-  - name: mart_btc_price_analysis
-    description: Gold mart for BTC price trend, moving averages, volatility, and sentiment overlay.
+  - name: int_btc_daily_enriched
+    description: Intermediate model joining daily Binance price with CoinGecko market data and Fear & Greed sentiment on date_day.
     columns:
       - name: date_day
         tests:
@@ -65,8 +82,52 @@ models:
         tests:
           - not_null
 
+  - name: mart_btc_price_analysis
+    description: Gold mart for BTC price trend, moving averages, volatility, and sentiment overlay.
+    columns:
+      - name: date_day
+        tests:
+          - not_null
+          # Every mart date must come from the intermediate model — no invented dates.
+          - relationships:
+              arguments:
+                to: ref('int_btc_daily_enriched')
+                field: date_day
+      - name: symbol
+        tests:
+          - not_null
+      - name: close
+        tests:
+          - not_null
+
   - name: mart_btc_sentiment_correlation
     description: Gold mart for rolling sentiment and return relationship analysis.
+    columns:
+      - name: date_day
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('mart_btc_price_analysis')
+                field: date_day
+      - name: symbol
+        tests:
+          - not_null
 
   - name: mart_btc_volume_anomalies
     description: Gold mart for detecting unusual BTC trading volume days.
+    columns:
+      - name: date_day
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('mart_btc_price_analysis')
+                field: date_day
+      - name: symbol
+        tests:
+          - not_null
+      - name: is_volume_anomaly
+        description: Boolean flag — always true/false, never null.
+        tests:
+          - not_null

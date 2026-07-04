@@ -20,3 +20,7 @@ models:
       +materialized: table
     marts:
       +materialized: table
+  # Elementary observability package: its models store dbt run/test results +
+  # metadata so `edr` can build the HTML report. Isolated in its own schema.
+  elementary:
+    +schema: elementary
