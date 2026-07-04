@@ -39,6 +39,14 @@ jobs:
       - name: Syntax check (compile all modules)
         run: python -m compileall -q bitcoin_pipeline
 
+      # Install dbt packages (Elementary) into dbt_packages/ so `dbt parse` can
+      # resolve them — packages.yml pins the deps; without this dbt errors with
+      # "found N package(s) specified in packages.yml, but only 0 installed".
+      - name: dbt deps (install package dependencies)
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}
+        run: dbt deps
+
       - name: dbt parse (validate models & refs)
         env:
           DBT_PROFILES_DIR: ${{ github.workspace }}
