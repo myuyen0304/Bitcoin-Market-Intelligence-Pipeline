@@ -1,46 +1,99 @@
 version: 2
 
 models:
+  # ─────────────────────────── STAGING (Bronze → Silver) ───────────────────────────
   - name: stg_coingecko_market_chart
-    description: Cleaned Silver table for CoinGecko daily BTC market data.
+    description: >
+      Silver table for CoinGecko BTC market data, one row per calendar day.
+      CoinGecko `market_chart?days=2` returns intraday snapshots timestamped at
+      whenever the DAG ran; this model dedups them to calendar-day grain (keeping
+      the latest snapshot ≈ close). See docs/bug-coingecko-grain-dedup-fanout.md.
     columns:
       - name: date_day
+        description: Calendar day of the observation (grain). One row per (coin_id, date_day).
         tests:
           - not_null
       - name: coin_id
+        description: CoinGecko coin identifier (e.g. "bitcoin").
         tests:
           - not_null
       - name: price_usd
+        description: BTC price in USD at the latest intraday snapshot of the day.
         tests:
           - not_null
+      - name: market_cap_usd
+        description: BTC market capitalization in USD at the latest snapshot of the day.
       - name: volume_usd
+        description: 24h trading volume in USD reported by CoinGecko for the day.
         tests:
           - not_null
+      - name: ingested_at
+        description: UTC timestamp when the source Parquet was written to Bronze.
+      - name: partition_year
+        description: Hive partition — year (YYYY) of the ingestion date.
+      - name: partition_month
+        description: Hive partition — month (MM) of the ingestion date.
+      - name: partition_day
+        description: Hive partition — day (DD) of the ingestion date.
 
   - name: stg_binance_klines
-    description: Cleaned Silver table for Binance BTCUSDT daily and hourly klines.
+    description: >
+      Silver table for Binance BTCUSDT OHLCV klines, both daily (1d) and hourly
+      (1h) intervals unioned together. Deduped to one row per
+      (symbol, interval, open_time), keeping the latest ingestion.
     columns:
       - name: open_time
+        description: Candle open time (UTC). Grain together with symbol + interval.
         tests:
           - not_null
+      - name: close_time
+        description: Candle close time (UTC).
       - name: symbol
+        description: Trading pair, always "BTCUSDT".
         tests:
           - not_null
       - name: interval
+        description: Candle interval — "1d" (daily) or "1h" (hourly).
         tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ['1d', '1h']
+      - name: open
+        description: Opening price of the candle (USDT).
+      - name: high
+        description: Highest price during the candle (USDT).
+      - name: low
+        description: Lowest price during the candle (USDT).
       - name: close
+        description: Closing price of the candle (USDT).
         tests:
           - not_null
       - name: volume
+        description: Base-asset (BTC) volume traded during the candle.
         tests:
           - not_null
+      - name: quote_volume
+        description: Quote-asset (USDT) volume traded during the candle.
+      - name: num_trades
+        description: Number of individual trades in the candle.
+      - name: taker_buy_base_vol
+        description: Base-asset (BTC) volume bought by takers (market buys).
+      - name: taker_buy_quote_vol
+        description: Quote-asset (USDT) volume bought by takers (market buys).
+      - name: ingested_at
+        description: UTC timestamp when the source Parquet was written to Bronze.
+      - name: partition_year
+        description: Hive partition — year (YYYY) of the ingestion date.
+      - name: partition_month
+        description: Hive partition — month (MM) of the ingestion date.
+      - name: partition_day
+        description: Hive partition — day (DD) of the ingestion date.
 
   - name: stg_fear_greed_index
-    description: Cleaned Silver table for Alternative.me Fear and Greed Index history.
+    description: >
+      Silver table for the Alternative.me Crypto Fear & Greed Index, one row per
+      calendar day. Deduped to daily grain keeping the latest ingestion.
     columns:
       - name: date_day
         description: Daily grain — one row per day, enforced by the dedup in the model.
@@ -48,6 +101,7 @@ models:
           - not_null
           - unique
       - name: fear_greed_value
+        description: Fear & Greed Index value, 0 (extreme fear) to 100 (extreme greed).
         tests:
           - not_null
       - name: sentiment_label
@@ -68,24 +122,70 @@ models:
           - accepted_values:
               arguments:
                 values: ['Extreme Fear', 'Fear', 'Neutral', 'Greed', 'Extreme Greed']
+      - name: ingested_at
+        description: UTC timestamp when the source Parquet was written to Bronze.
+      - name: partition_year
+        description: Hive partition — year (YYYY) of the ingestion date.
+      - name: partition_month
+        description: Hive partition — month (MM) of the ingestion date.
+      - name: partition_day
+        description: Hive partition — day (DD) of the ingestion date.
 
+  # ─────────────────────────── INTERMEDIATE (join/enrich) ───────────────────────────
   - name: int_btc_daily_enriched
-    description: Intermediate model joining daily Binance price with CoinGecko market data and Fear & Greed sentiment on date_day.
+    description: >
+      Intermediate model joining daily Binance price (grain driver) with CoinGecko
+      market data and Fear & Greed sentiment on date_day. LEFT joins off Binance so
+      the row count equals the number of Binance daily candles (one row per day).
     columns:
       - name: date_day
+        description: Calendar day (grain). One row per (symbol, date_day).
         tests:
           - not_null
       - name: symbol
+        description: Trading pair, "BTCUSDT" (from Binance).
         tests:
           - not_null
+      - name: open
+        description: Daily opening price (USDT), from Binance 1d candle.
+      - name: high
+        description: Daily high price (USDT), from Binance 1d candle.
+      - name: low
+        description: Daily low price (USDT), from Binance 1d candle.
       - name: close
+        description: Daily closing price (USDT), from Binance 1d candle.
         tests:
           - not_null
+      - name: volume
+        description: Daily base-asset (BTC) volume, from Binance.
+      - name: quote_volume
+        description: Daily quote-asset (USDT) volume, from Binance.
+      - name: num_trades
+        description: Number of trades in the day, from Binance.
+      - name: coingecko_price_usd
+        description: BTC price in USD from CoinGecko (nullable if no CoinGecko row that day).
+      - name: market_cap_usd
+        description: BTC market cap in USD from CoinGecko (nullable).
+      - name: coingecko_volume_usd
+        description: 24h volume in USD from CoinGecko (nullable).
+      - name: fear_greed_value
+        description: Fear & Greed Index value 0–100 for the day (nullable).
+      - name: sentiment_label
+        description: Fear & Greed label from the API for the day (nullable).
+      - name: sentiment_bucket
+        description: Our numeric-range sentiment classification for the day (nullable).
+      - name: latest_ingested_at
+        description: Most recent ingested_at across the three joined sources — data freshness marker.
 
+  # ─────────────────────────── MARTS (Gold) ───────────────────────────
   - name: mart_btc_price_analysis
-    description: Gold mart for BTC price trend, moving averages, volatility, and sentiment overlay.
+    description: >
+      Gold mart for BTC price trend: daily returns, 7/30-day moving averages,
+      30-day volatility, with sentiment columns carried through. One row per
+      (symbol, date_day). Central mart the other two marts build on.
     columns:
       - name: date_day
+        description: Calendar day (grain).
         tests:
           - not_null
           # Every mart date must come from the intermediate model — no invented dates.
@@ -94,30 +194,93 @@ models:
                 to: ref('int_btc_daily_enriched')
                 field: date_day
       - name: symbol
+        description: Trading pair, "BTCUSDT".
+        tests:
+          - not_null
+      - name: open
+        description: Daily opening price (USDT).
+      - name: high
+        description: Daily high price (USDT).
+      - name: low
+        description: Daily low price (USDT).
+      - name: close
+        description: Daily closing price (USDT).
+        tests:
+          - not_null
+      - name: volume
+        description: Daily base-asset (BTC) volume.
+      - name: quote_volume
+        description: Daily quote-asset (USDT) volume.
+      - name: num_trades
+        description: Number of trades in the day.
+      - name: market_cap_usd
+        description: BTC market cap in USD from CoinGecko (nullable).
+      - name: coingecko_volume_usd
+        description: 24h volume in USD from CoinGecko (nullable).
+      - name: fear_greed_value
+        description: Fear & Greed Index value 0–100 (nullable).
+      - name: sentiment_label
+        description: Fear & Greed label from the API (nullable).
+      - name: sentiment_bucket
+        description: Our numeric-range sentiment classification (nullable).
+      - name: price_change_usd
+        description: Day-over-day change in close price (close − previous close). Null on first day.
+      - name: daily_return_pct
+        description: Day-over-day percentage return of close price. Null on first day.
+      - name: ma7_close
+        description: 7-day trailing moving average of close (current + 6 preceding rows).
+      - name: ma30_close
+        description: 30-day trailing moving average of close (current + 29 preceding rows).
+      - name: volatility_30d_pct
+        description: 30-day trailing sample standard deviation of daily_return_pct.
+      - name: latest_ingested_at
+        description: Data freshness marker carried from the intermediate model.
+
+  - name: mart_btc_sentiment_correlation
+    description: >
+      Gold mart analysing the relationship between Fear & Greed sentiment and BTC
+      returns: sentiment change, next-day return, and a rolling 30-day correlation.
+      Filtered to days that have a Fear & Greed value.
+    columns:
+      - name: date_day
+        description: Calendar day (grain).
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('mart_btc_price_analysis')
+                field: date_day
+      - name: symbol
+        description: Trading pair, "BTCUSDT".
         tests:
           - not_null
       - name: close
-        tests:
-          - not_null
-
-  - name: mart_btc_sentiment_correlation
-    description: Gold mart for rolling sentiment and return relationship analysis.
-    columns:
-      - name: date_day
-        tests:
-          - not_null
-          - relationships:
-              arguments:
-                to: ref('mart_btc_price_analysis')
-                field: date_day
-      - name: symbol
-        tests:
-          - not_null
+        description: Daily closing price (USDT).
+      - name: daily_return_pct
+        description: Day-over-day percentage return of close price.
+      - name: fear_greed_value
+        description: Fear & Greed Index value 0–100 for the day.
+      - name: sentiment_label
+        description: Fear & Greed label from the API.
+      - name: sentiment_bucket
+        description: Our numeric-range sentiment classification.
+      - name: sentiment_change
+        description: Day-over-day change in fear_greed_value. Null on first day.
+      - name: next_day_return_pct
+        description: The following day's daily_return_pct (lead), for "does sentiment predict return" analysis.
+      - name: rolling_30d_sentiment_return_corr
+        description: Rolling 30-day Pearson correlation between fear_greed_value and daily_return_pct.
+      - name: latest_ingested_at
+        description: Data freshness marker carried from the price mart.
 
   - name: mart_btc_volume_anomalies
-    description: Gold mart for detecting unusual BTC trading volume days.
+    description: >
+      Gold mart flagging unusual BTC trading-volume days using a 30-day rolling
+      z-score. A day is an anomaly when volume is ≥ 2 standard deviations above
+      its 30-day mean.
     columns:
       - name: date_day
+        description: Calendar day (grain).
         tests:
           - not_null
           - relationships:
@@ -125,9 +288,32 @@ models:
                 to: ref('mart_btc_price_analysis')
                 field: date_day
       - name: symbol
+        description: Trading pair, "BTCUSDT".
         tests:
           - not_null
+      - name: close
+        description: Daily closing price (USDT).
+      - name: volume
+        description: Daily base-asset (BTC) volume being scored.
+      - name: quote_volume
+        description: Daily quote-asset (USDT) volume.
+      - name: num_trades
+        description: Number of trades in the day.
+      - name: daily_return_pct
+        description: Day-over-day percentage return of close price.
+      - name: fear_greed_value
+        description: Fear & Greed Index value 0–100 (nullable).
+      - name: sentiment_label
+        description: Fear & Greed label from the API (nullable).
+      - name: volume_ma30
+        description: 30-day trailing moving average of volume (baseline for the z-score).
+      - name: volume_std30
+        description: 30-day trailing sample standard deviation of volume.
+      - name: volume_z_score
+        description: (volume − volume_ma30) / volume_std30. Null when std is 0 or undefined.
       - name: is_volume_anomaly
-        description: Boolean flag — always true/false, never null.
+        description: Boolean flag — true when volume_z_score ≥ 2. Always true/false, never null.
         tests:
           - not_null
+      - name: latest_ingested_at
+        description: Data freshness marker carried from the price mart.

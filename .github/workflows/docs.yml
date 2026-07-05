@@ -1,0 +1,80 @@
+name: dbt docs
+
+# Builds the dbt documentation site (lineage graph + model/column descriptions)
+# and publishes it to GitHub Pages. The catalog is generated against an empty
+# throwaway DuckDB, so this needs no warehouse data or external APIs — lineage and
+# all descriptions come from the manifest. Link the Pages URL in the README / CV.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bitcoin_pipeline/dbt/**"
+      - "dbt_project.yml"
+      - "packages.yml"
+      - "profiles.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch: # allow manual "Run workflow" from the Actions tab
+
+# Permissions required by the GitHub Pages deploy action.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deploy at a time; newer runs cancel older in-flight ones.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build dbt docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: dbt deps (install Elementary etc.)
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}
+        run: dbt deps
+
+      - name: dbt docs generate (static, empty warehouse)
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}
+          DUCKDB_PATH: /tmp/docs.duckdb # throwaway DB — we only need the manifest
+        run: dbt docs generate --static
+
+      - name: Assemble Pages site
+        run: |
+          mkdir -p _site
+          cp target/static_index.html _site/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

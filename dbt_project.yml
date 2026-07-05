@@ -24,3 +24,7 @@ models:
   # metadata so `edr` can build the HTML report. Isolated in its own schema.
   elementary:
     +schema: elementary
+    # Hide Elementary's ~30 internal models from the dbt docs site so the public
+    # lineage graph shows only our 7 pipeline models (staging → int → marts).
+    +docs:
+      show: false
