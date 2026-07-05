@@ -1,0 +1,55 @@
+# Metabase BI stack for the Bitcoin pipeline (Phase F).
+#
+# Metabase reads a Postgres "serving" database that holds the Gold marts. The
+# marts are pushed there from DuckDB by the loader:
+#     bitcoin_pipeline/serving/load_marts_to_postgres.py
+#
+# Usage:
+#   docker compose -f docker-compose.metabase.yml up -d serving-db   # start Postgres
+#   python -m bitcoin_pipeline.serving.load_marts_to_postgres         # DuckDB -> Postgres
+#   docker compose -f docker-compose.metabase.yml up -d metabase      # start Metabase
+#   open http://localhost:3000   (first run: create an admin account)
+#
+# In Metabase, add a Postgres data source:
+#   Host: serving-db  Port: 5432  DB: analytics  User: analytics  Password: analytics
+# (Metabase talks to Postgres over the Docker network, so use the service name
+#  and internal port 5432 — not the host-published 5433.)
+
+services:
+  # Postgres serving database: holds the Gold marts for Metabase to query.
+  # Kept separate from the Airflow metadata Postgres so this stack runs on its own.
+  serving-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: analytics
+      POSTGRES_DB: analytics
+    ports:
+      # Host 5433 -> container 5432, so the loader on the host can reach it
+      # without clashing with any local Postgres on 5432.
+      - "5433:5432"
+    volumes:
+      - serving-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # Metabase BI server. Uses its default embedded H2 application database, which
+  # is fine for a local/portfolio demo (a production deploy would point
+  # MB_DB_* at Postgres). It reads analytics data from serving-db.
+  metabase:
+    image: metabase/metabase:latest
+    ports:
+      - "3000:3000"
+    environment:
+      MB_DB_TYPE: h2
+    depends_on:
+      serving-db:
+        condition: service_healthy
+    restart: always
+
+volumes:
+  serving-db:
