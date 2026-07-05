@@ -19,6 +19,39 @@ CoinGecko / Binance / Fear & Greed
 
 It is intentionally local-first for the MVP. AWS, Terraform, Kafka, and production Airflow remain roadmap items after the recruiter demo is stable.
 
+## Architecture
+
+Compute (DuckDB) is deliberately separated from the serving layer (Postgres): the BI
+tool reads a Postgres serving database populated from DuckDB, so it never locks the
+warehouse and uses a first-class Postgres driver instead of a fragile community DuckDB one.
+
+```mermaid
+flowchart LR
+    subgraph INGEST["Ingestion (Python)"]
+        API["CoinGecko / Binance /<br/>Fear & Greed APIs"]
+    end
+    subgraph COMPUTE["Compute / Warehouse"]
+        MINIO[("MinIO<br/>Bronze — Parquet")]
+        DUCK[("DuckDB<br/>Silver + Gold marts")]
+    end
+    subgraph SERVE["Serving layer"]
+        PG[("Postgres 'analytics'<br/>3 Gold marts")]
+    end
+    subgraph BI["BI / Dashboard"]
+        MB["Metabase<br/>localhost:3000"]
+        ST["Streamlit app"]
+    end
+    API -->|"dbt build (Cosmos)"| MINIO
+    MINIO --> DUCK
+    DUCK -->|"loader<br/>(DuckDB read-only)"| PG
+    PG -->|"first-class<br/>Postgres driver"| MB
+    DUCK -.->|"direct read<br/>(read-only)"| ST
+
+    style PG fill:#2d6cdf,color:#fff
+    style DUCK fill:#f5a623,color:#000
+    style MB fill:#509ee3,color:#fff
+```
+
 ## Business Questions
 
 - How is BTC price trending by day, MA7, MA30, and 30-day volatility?
