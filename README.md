@@ -2,22 +2,24 @@
 
 [![CI](https://github.com/myuyen0304/Bitcoin-Market-Intelligence-Pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/myuyen0304/Bitcoin-Market-Intelligence-Pipeline/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
-![dbt](https://img.shields.io/badge/dbt-DuckDB-FF694B.svg)
+![Airflow](https://img.shields.io/badge/orchestration-Airflow%20%2B%20Cosmos-017CEE.svg)
+![dbt](https://img.shields.io/badge/transform-dbt%20%2F%20DuckDB-FF694B.svg)
 
-Local-first Data Engineering portfolio project for Bitcoin market analytics.
-
-## What This Project Shows
-
-This repo builds a reproducible pipeline from public APIs to analytics-ready marts:
+End-to-end **data engineering pipeline** for Bitcoin market data: orchestrated
+multi-source ingestion, a Medallion (Bronze/Silver/Gold) warehouse, data quality
+tests, pipeline observability, and a separated serving layer for BI.
 
 ```text
 CoinGecko / Binance / Fear & Greed
-        -> Bronze Parquet
-        -> dbt + DuckDB Silver/Gold marts
-        -> Streamlit dashboard
+        -> Bronze Parquet (Hive-partitioned, on MinIO/S3 or local disk)
+        -> dbt + DuckDB  ->  Silver -> Gold marts
+        -> Postgres serving layer  ->  Metabase BI
+   orchestrated end-to-end by Airflow (Cosmos renders dbt per-model)
 ```
 
-It is intentionally local-first for the MVP. AWS, Terraform, Kafka, and production Airflow remain roadmap items after the recruiter demo is stable.
+Local-first by design: the whole stack runs on Docker Compose with **MinIO** as an
+S3-compatible object store, so it exercises a real cloud-shaped data path at zero
+cost. AWS/Terraform and Kafka streaming are roadmap items.
 
 ## Architecture
 
@@ -52,27 +54,110 @@ flowchart LR
     style MB fill:#509ee3,color:#fff
 ```
 
-## Business Questions
+## Orchestration & Reliability
 
-- How is BTC price trending by day, MA7, MA30, and 30-day volatility?
-- Does Fear & Greed sentiment move with daily BTC returns?
-- Which days have unusual trading volume?
-- How fresh is the data currently powering the dashboard?
+The whole pipeline runs as one Airflow DAG (`btc_daily_ingestion`), scheduled daily
+at 08:30 Asia/Ho_Chi_Minh:
+
+```text
+ingest_coingecko  ─┐
+ingest_binance    ─┼── validate_bronze ── dbt_build (Cosmos: task per model + test)
+ingest_fear_greed ─┘
+```
+
+Engineering decisions that make it production-shaped, not a toy:
+
+- **Cosmos renders dbt into per-model Airflow tasks** — each model/test is its own
+  task with independent retry and lineage in the Airflow graph, instead of one opaque
+  `dbt build` shell command.
+- **Idempotent runs** — tasks filter source data to `logical_date`, `catchup=False`,
+  and `max_active_runs=1`, so re-running a date never double-writes.
+- **Retry policy** — ingestion uses exponential backoff; dbt tasks use a short fixed
+  retry tuned for transient object-store cold-cache misses.
+- **Single-writer safety** — DuckDB allows one writer; all dbt tasks are pinned to a
+  1-slot `duckdb_serial` pool so parallel staging models can't deadlock on the file.
+- **Config-driven storage** — `S3_ENDPOINT_URL` switches Bronze between MinIO/S3 and
+  local disk with no code change; the DAG stays agnostic to where Bronze lands.
+
+**Backfill case study:** a 27-day June gap appeared because incremental ingestion only
+pulls recent days. It was repaired by re-running the full-history bronze loader
+(`start=2024-01-01`) → `dbt run` → serving-layer loader, restoring a continuous
+2024-01-01 → 2026-07-05 series (917 rows, 0 gaps) — the kind of gap-detection and
+backfill work that data pipelines need in practice.
+
+## Data Quality & Observability
+
+- **45 dbt tests** as code in `schema.yml`: not-null keys, accepted values (Binance
+  intervals), Fear & Greed range 0–100, positive price / non-negative volume checks.
+- **Bronze validation gate** in the DAG: `validate_bronze` fails the run before any
+  transform if a source landed empty or with a stale date.
+- **Elementary** (dbt observability, v0.25) is installed as a dbt package for
+  data anomaly monitoring and run artifacts on top of the standard tests.
+
+Run the tests:
+
+```powershell
+dbt test
+```
+
+## Medallion Model (dbt + DuckDB)
+
+```text
+staging/       Bronze -> Silver: typed, deduped to grain (stg_*.sql)
+intermediate/  daily enrichment joins across the 3 sources
+marts/         Gold business marts:
+               - mart_btc_price_analysis        (MA7/MA30, volatility)
+               - mart_btc_sentiment_correlation (rolling 30d corr, next-day return)
+               - mart_btc_volume_anomalies      (volume z-score, anomaly flag)
+```
+
+All business logic lives in the marts, not in the BI tool — Metabase only SELECTs
+pre-computed columns. Models and columns are documented in `schema.yml`.
+
+**Live dbt docs + lineage graph** (auto-published to GitHub Pages):
+<https://myuyen0304.github.io/Bitcoin-Market-Intelligence-Pipeline/>
+
+## CI/CD
+
+GitHub Actions runs on every push/PR to `main` — deterministic checks only (no live
+API calls, which are flaky/geo-blocked on CI runners):
+
+- `ruff` lint + `compileall` syntax check
+- `dbt deps` + `dbt parse` to validate models and refs
+
+## Serving Layer & Dashboard
+
+A **Postgres serving database** is loaded from the DuckDB Gold marts, and Metabase
+reads from Postgres — so BI never touches the compute warehouse. The Metabase
+dashboard has two tabs; it is the pipeline's last mile, proof the marts are usable.
+
+**Price & Trends** — KPI cards, BTC close vs MA7/MA30, and volume anomalies.
+
+![Price & Trends tab](bitcoin_pipeline/images/PriceTrends.png)
+
+**Sentiment Deep-Dive** — Fear & Greed vs daily return, sentiment distribution, and rolling 30-day correlation.
+
+![Sentiment Deep-Dive tab](bitcoin_pipeline/images/Sentiment-Deep-Dive.png)
 
 ## Repository Map
 
 ```text
 bitcoin_pipeline/
-  ingestion/               Python API fetchers and shared utilities
+  ingestion/               Python API fetchers (BaseFetcher) and shared utilities
+  dags/                    Airflow daily DAG (Cosmos dbt task group)
   data/bronze/             Local Hive-partitioned Bronze Parquet outputs
   dbt/models/staging/      Silver cleanup models
   dbt/models/intermediate/ Daily enrichment joins
   dbt/models/marts/        Gold business marts
+  dbt/models/schema.yml    Model/column docs + data-quality tests
   dashboard/app.py         Streamlit dashboard reading Gold marts only
-  dags/                    Existing Airflow daily ingestion DAG
+  tests/                   API smoke tests
+docker-compose.yml            local dashboard
+docker-compose.airflow.yml    Airflow (LocalExecutor + Postgres) + MinIO
+docker-compose.metabase.yml   Metabase + Postgres serving layer
 ```
 
-## Setup
+## Quickstart
 
 Use Python 3.11+.
 
@@ -80,50 +165,22 @@ Use Python 3.11+.
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
-```
-
-For dbt, point profiles to this repo before running commands:
-
-```powershell
 $env:DBT_PROFILES_DIR=(Get-Location).Path
 ```
 
-## Run The Local Demo
-
-Generate fresh Bronze Parquet:
+Run the pipeline by hand (ingest -> transform -> dashboard):
 
 ```powershell
 .\.venv\Scripts\python.exe bitcoin_pipeline\run_local_bronze_ingestion.py
-```
-
-Build Silver and Gold marts in DuckDB:
-
-```powershell
-$env:DBT_PROFILES_DIR=(Get-Location).Path
 dbt run
 dbt test
+streamlit run bitcoin_pipeline/dashboard/app.py   # http://localhost:8501
 ```
 
-Open the dashboard:
+## Run The Full Stack On Airflow (Docker)
 
-```powershell
-streamlit run bitcoin_pipeline/dashboard/app.py
-```
-
-Dashboard URL: `http://localhost:8501`
-
-## Docker Dashboard
-
-After Bronze and dbt have produced `bitcoin_pipeline/data/bitcoin_pipeline.duckdb`, the dashboard can also run in Docker:
-
-```powershell
-docker compose up --build dashboard
-```
-
-## Orchestration with Airflow (Docker)
-
-Run the whole pipeline — 3 parallel ingestions -> Bronze validation -> `dbt build`
-— on a local Airflow (LocalExecutor + Postgres) instead of running each step by hand:
+Run the whole DAG — 3 parallel ingestions -> Bronze validation -> `dbt build` (per
+model) — on a local Airflow with MinIO standing in for S3:
 
 ```powershell
 docker compose -f docker-compose.airflow.yml build
@@ -131,70 +188,29 @@ docker compose -f docker-compose.airflow.yml up airflow-init   # one-off: metada
 docker compose -f docker-compose.airflow.yml up -d
 ```
 
-Open the Airflow UI at `http://localhost:8080` (login `admin` / `admin`), enable the
-`btc_daily_ingestion` DAG, and trigger it. Tear down with:
+- Airflow UI: `http://localhost:8080` (login `admin` / `admin`) — enable and trigger
+  `btc_daily_ingestion`.
+- MinIO console: `http://localhost:9001` (login `minioadmin` / `minioadmin`).
 
-```powershell
-docker compose -f docker-compose.airflow.yml down
-```
-
-The stack also bundles a **MinIO** service (S3-compatible object storage) as a local
-stand-in for AWS S3. When run this way the pipeline writes Bronze to MinIO and dbt
-reads it back over S3 (`httpfs`), so the flow exercises a real object-store path
-without any cloud cost. Browse the objects in the MinIO console at
-`http://localhost:9001` (login `minioadmin` / `minioadmin`).
-
-Notes:
-
-- dbt runs in an isolated venv inside the image, so its dependencies never conflict
-  with Airflow's own pinned packages.
-- Bronze storage is config-driven via `S3_ENDPOINT_URL`: the Airflow stack sets it to
-  MinIO, while running scripts directly on the host (empty value) keeps Bronze on local
-  disk under `bitcoin_pipeline/data/`. The DuckDB warehouse always stays local, so the
-  dashboard is unaffected either way.
+When run this way the pipeline writes Bronze to MinIO and dbt reads it back over S3
+(`httpfs`), exercising a real object-store path. dbt runs in an isolated venv inside
+the image so its deps never conflict with Airflow's. Tear down with
+`docker compose -f docker-compose.airflow.yml down`.
 
 ## Output Contract
 
-Bronze files stay as Parquet under:
-
 ```text
-bitcoin_pipeline/data/bronze/{source}/{dataset}/year=YYYY/month=MM/day=DD/
+Bronze:  bitcoin_pipeline/data/bronze/{source}/{dataset}/year=YYYY/month=MM/day=DD/
+DuckDB:  bitcoin_pipeline/data/bitcoin_pipeline.duckdb
+Serving: Postgres 'analytics' — 3 Gold marts, read by Metabase
 ```
 
-dbt creates a local DuckDB database at:
+## Roadmap
 
-```text
-bitcoin_pipeline/data/bitcoin_pipeline.duckdb
-```
-
-The dashboard reads only Gold marts:
-
-- `mart_btc_price_analysis`
-- `mart_btc_sentiment_correlation`
-- `mart_btc_volume_anomalies`
-
-## Data Quality Checks
-
-Run:
-
-```powershell
-dbt test
-```
-
-Current checks cover:
-
-- Not-null dates, symbols, close price, and sentiment fields
-- Accepted Binance intervals
-- Fear & Greed value range from 0 to 100
-- Positive price and non-negative volume sanity checks
-
-## Interview Talking Points
-
-- Medallion architecture: raw Bronze Parquet, typed Silver tables, business Gold marts.
-- DuckDB keeps the demo simple while still using SQL transformation patterns close to warehouse work.
-- dbt models document lineage from raw API outputs to recruiter-visible metrics.
-- The dashboard is intentionally downstream-only: it queries Gold marts, not raw files.
-- Airflow orchestration and MinIO/S3-compatible Bronze storage are in place; roadmap phases add Great Expectations, dbt docs/lineage, and real cloud (Terraform/AWS) deployment.
+- Great Expectations suite to replace the lightweight `validate_bronze` gate
+- Real cloud deploy (Terraform + AWS S3/Athena) replacing MinIO/DuckDB
+- Kafka streaming ingestion for intraday data
+- Reverse-ETL alerting (Slack) on volume anomalies
 
 ## Environment Variables
 
