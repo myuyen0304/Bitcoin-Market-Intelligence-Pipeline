@@ -15,4 +15,4 @@ boto3>=1.34,<2
 # Cosmos renders the dbt project into one Airflow task per model/test. It runs
 # in Airflow's env but calls dbt via SUBPROCESS against /opt/dbt-venv, so dbt's
 # own deps stay isolated (astronomer-cosmos itself does NOT pull in dbt-core).
-astronomer-cosmos>=1.7,<2
+astronomer-cosmos>=1.15.0,<2
