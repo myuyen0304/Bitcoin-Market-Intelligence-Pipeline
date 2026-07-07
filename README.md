@@ -4,6 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Airflow](https://img.shields.io/badge/orchestration-Airflow%20%2B%20Cosmos-017CEE.svg)
 ![dbt](https://img.shields.io/badge/transform-dbt%20%2F%20DuckDB-FF694B.svg)
+[![dbt docs](https://img.shields.io/badge/dbt%20docs-live%20lineage-orange.svg)](https://myuyen0304.github.io/Bitcoin-Market-Intelligence-Pipeline/)
 
 End-to-end **data engineering pipeline** for Bitcoin market data: orchestrated
 multi-source ingestion, a Medallion (Bronze/Silver/Gold) warehouse, data quality
