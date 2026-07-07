@@ -5,7 +5,7 @@
 requests>=2.32,<3
 pandas>=2.2,<3
 pyarrow>=16,<21
-python-dotenv>=1.0,<2
+python-dotenv>=1.2.2,<2
 websocket-client>=1.8,<2
 # S3Writer (used by write_bronze) talks to MinIO/S3 via boto3. The DAG imports it
 # at parse time, so boto3 must live in Airflow's env. Pinned range does not clash
