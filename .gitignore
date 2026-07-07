@@ -36,6 +36,11 @@ logs/dbt.log
 edr_target/
 bitcoin_pipeline/reports/
 
+# Great Expectations working dir — file context config + Data Docs HTML + results.
+# All generated/rebuilt from quality/suites.py on each run; suites-as-code is the
+# source of truth, so nothing here is committed (same policy as Elementary's reports).
+bitcoin_pipeline/quality/gx/
+
 # Local data artifacts
 bitcoin_pipeline/data/bronze/
 bitcoin_pipeline/data/**/*.parquet
