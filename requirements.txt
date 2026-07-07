@@ -10,3 +10,5 @@ dbt-duckdb>=1.8,<2
 streamlit>=1.35,<2
 plotly>=5.22,<7
 python-dotenv>=1.0,<2
+# Data quality — validates Bronze input before dbt transforms (tested on 1.18.2, Python 3.13)
+great-expectations>=1.0,<2

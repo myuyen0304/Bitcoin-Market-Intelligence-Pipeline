@@ -87,12 +87,22 @@ backfill work that data pipelines need in practice.
 
 ## Data Quality & Observability
 
-- **45 dbt tests** as code in `schema.yml`: not-null keys, accepted values (Binance
-  intervals), Fear & Greed range 0–100, positive price / non-negative volume checks.
-- **Bronze validation gate** in the DAG: `validate_bronze` fails the run before any
-  transform if a source landed empty or with a stale date.
+Two layers of checks, shifted to where they catch problems earliest:
+
+- **Great Expectations gate on Bronze *input*** (`bitcoin_pipeline/quality/`): the DAG's
+  `validate_bronze` task runs an expectation suite per source against the raw Parquet it
+  just wrote — row count ≥ 1, not-null keys, `price_usd`/OHLC strictly positive,
+  `high ≥ low`, `fear_greed_value` in 0–100, `sentiment_bucket` in the known set. A
+  failure stops the run before dbt transforms bad data. Suites are defined as code and
+  the run refreshes HTML **Data Docs** (observability for input data).
+- **45 dbt tests on Silver/Gold *output*** as code in `schema.yml`: not-null keys,
+  accepted values (Binance intervals), Fear & Greed range 0–100, positive price /
+  non-negative volume, grain uniqueness.
 - **Elementary** (dbt observability, v0.25) is installed as a dbt package for
   data anomaly monitoring and run artifacts on top of the standard tests.
+
+> Great Expectations validates the **input** (Bronze, before transform); dbt tests
+> validate the **output** (Silver/Gold, after transform).
 
 Run the tests:
 
@@ -207,7 +217,7 @@ Serving: Postgres 'analytics' — 3 Gold marts, read by Metabase
 
 ## Roadmap
 
-- Great Expectations suite to replace the lightweight `validate_bronze` gate
+- Incremental dbt marts (`materialized='incremental'`, `merge`) to prove idempotency at the transform layer
 - Real cloud deploy (Terraform + AWS S3/Athena) replacing MinIO/DuckDB
 - Kafka streaming ingestion for intraday data
 - Reverse-ETL alerting (Slack) on volume anomalies
