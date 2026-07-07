@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pendulum
 from airflow import DAG
+from airflow.exceptions import AirflowException
 from airflow.operators.python import PythonOperator
 from cosmos import (
     DbtTaskGroup,
@@ -208,13 +209,17 @@ def ingest_fear_greed(**context) -> str:
 
 def validate_bronze(**context) -> None:
     """
-    Basic validation after all sources land to Bronze.
-    Checks:
-      1. All 3 XCom paths are non-empty (all tasks succeeded)
-      2. Row counts are non-zero
-      3. Dates match logical_date (no stale data)
+    Quality gate between ingestion and transform.
 
-    In production: replace with Great Expectations suite.
+    Two steps, cheap-check first:
+      1. All 3 XCom paths are non-empty (every ingest task produced a file).
+      2. Each Bronze Parquet passes its Great Expectations suite (row count,
+         not-null keys, value ranges — e.g. price > 0, fear_greed in 0–100,
+         high >= low). GE reads the file back storage-agnostically (local or
+         s3://), so this gates the same data dbt is about to read.
+
+    Raising here (all_success downstream) stops dbt_build from running on bad
+    Bronze — GE validates the *input*, dbt tests validate the *output*.
     """
     ti = context["ti"]
 
@@ -224,13 +229,22 @@ def validate_bronze(**context) -> None:
         "feargreed": ti.xcom_pull(key="feargreed_s3_path", task_ids="ingest_fear_greed"),
     }
 
-    failed = [source for source, path in paths.items() if not path]
-    if failed:
-        raise ValueError(f"Bronze validation failed — missing paths for: {failed}")
+    missing = [source for source, path in paths.items() if not path]
+    if missing:
+        raise AirflowException(f"Bronze validation failed — missing paths for: {missing}")
 
-    logger.info("Bronze validation passed ✓")
-    for source, path in paths.items():
-        logger.info(f"  {source}: {path}")
+    # Import GE lazily inside the task: it is a heavy import and would slow DAG
+    # parsing if pulled in at module top.
+    from quality.bronze_checkpoint import run_bronze_checks
+
+    failed = [
+        source for source, path in paths.items()
+        if not run_bronze_checks(source, path)["success"]
+    ]
+    if failed:
+        raise AirflowException(f"Great Expectations Bronze validation FAILED for: {failed}")
+
+    logger.info("GE Bronze validation passed for all sources ✓")
 
 
 # ── DAG definition ───────────────────────────────────────────────────────
@@ -266,6 +280,12 @@ with DAG(
         task_id="validate_bronze",
         python_callable=validate_bronze,
         trigger_rule="all_success",   # only run if ALL 3 ingestions pass
+        # Data-quality gate: a real GE failure means bad data, which a retry won't
+        # fix — so fail fast instead of the DAG's 2×5-min exponential backoff. One
+        # short retry still absorbs a transient MinIO/network blip on the read-back.
+        retries=1,
+        retry_delay=timedelta(seconds=30),
+        retry_exponential_backoff=False,
     )
 
     # Transform Bronze -> Silver/Gold with dbt, rendered by Cosmos into one
