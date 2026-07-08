@@ -14,7 +14,7 @@ on:
 
 jobs:
   quality:
-    name: Lint, compile & dbt parse
+    name: Lint, compile, test & dbt parse
     runs-on: ubuntu-latest
 
     steps:
@@ -38,6 +38,11 @@ jobs:
 
       - name: Syntax check (compile all modules)
         run: python -m compileall -q bitcoin_pipeline
+
+      # Unit tests only. `integration` tests hit live CoinGecko/Binance/Fear&Greed
+      # and are deselected by pytest.ini's addopts, so CI stays offline-safe.
+      - name: Unit tests (pytest)
+        run: python -m pytest
 
       # Install dbt packages (Elementary) into dbt_packages/ so `dbt parse` can
       # resolve them — packages.yml pins the deps; without this dbt errors with
