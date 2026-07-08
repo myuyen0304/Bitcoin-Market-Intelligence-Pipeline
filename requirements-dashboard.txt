@@ -1,0 +1,11 @@
+# Runtime deps for the Streamlit dashboard image ONLY (root Dockerfile).
+# Kept minimal on purpose: the dashboard reads Gold marts straight from the
+# DuckDB file and renders Plotly charts. It does NOT ingest, transform, validate
+# or test — so dbt / Great Expectations / pytest / boto3 / requests are all
+# deliberately excluded here to keep the image light. The full toolchain lives
+# in requirements.txt (dev + CI + Airflow ingestion env).
+duckdb>=1.0,<2
+pandas>=2.2,<3
+plotly>=5.22,<7
+streamlit>=1.35,<2
+python-dotenv>=1.0,<2
