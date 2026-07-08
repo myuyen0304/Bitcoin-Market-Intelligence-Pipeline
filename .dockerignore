@@ -1,0 +1,38 @@
+# Keep the Docker build context small so `COPY . .` doesn't bake in bloat.
+# Applies to every image built from the repo root (dashboard + Airflow).
+
+# Version control & CI
+.git
+.github
+.gitignore
+
+# Personal / non-runtime docs & notes (not needed in any image)
+docs
+README.md
+*.md
+!requirements*.txt
+
+# Python caches, test & tooling artifacts
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.venv
+venv
+
+# dbt build artifacts & installed packages (rebuilt via `dbt deps` when needed)
+target
+dbt_packages
+logs
+elementary
+
+# Data lake / warehouse files — mounted as volumes at runtime, never baked in
+bitcoin_pipeline/data
+data
+*.duckdb
+*.parquet
+
+# Local env / secrets
+.env
+.env.*
