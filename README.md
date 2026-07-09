@@ -134,6 +134,7 @@ GitHub Actions runs on every push/PR to `main` — deterministic checks only (no
 API calls, which are flaky/geo-blocked on CI runners):
 
 - `ruff` lint + `compileall` syntax check
+- `pytest` unit tests (mocked; the live-API tests are marked `integration` and skipped)
 - `dbt deps` + `dbt parse` to validate models and refs
 
 ## Serving Layer & Dashboard
