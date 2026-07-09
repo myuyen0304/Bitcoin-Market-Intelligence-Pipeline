@@ -99,7 +99,14 @@ services:
       retries: 5
     restart: always
 
-  # One-off init: migrate metadata DB + create the admin user, then exit.
+  # One-off init: migrate metadata DB, create the admin user, bootstrap dbt, then exit.
+  #
+  # The dbt steps must run HERE, not in the Dockerfile: the repo is bind-mounted
+  # over /opt/airflow/project at run time, so anything the image wrote to that path
+  # is shadowed. Both outputs are gitignored, so a fresh clone has neither:
+  #   - dbt deps  → dbt_packages/ (Elementary, pinned in packages.yml)
+  #   - dbt parse → target/manifest.json, which Cosmos reads at DAG-parse time
+  #                 (LoadMode.DBT_MANIFEST) to render the per-model task group.
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash
@@ -111,6 +118,9 @@ services:
           --username admin --password admin \
           --firstname Admin --lastname User \
           --role Admin --email admin@example.com || true
+        cd /opt/airflow/project
+        "$${DBT_BIN}" deps --profiles-dir /opt/airflow/project
+        "$${DBT_BIN}" parse --profiles-dir /opt/airflow/project
     restart: on-failure
 
   airflow-scheduler:
