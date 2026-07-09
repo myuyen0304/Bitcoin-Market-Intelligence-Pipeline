@@ -14,7 +14,7 @@ Design decisions:
   - 3 ingestion tasks run in PARALLEL (no dependency between sources)
   - validate_bronze runs AFTER all 3 complete (trigger_rule=all_success)
   - dbt_build runs AFTER Bronze is validated (ingest -> transform end-to-end)
-  - Writes to local Bronze via local_writer; MinIO/S3 comes in a later phase
+  - Bronze destination (local disk vs MinIO/S3) is chosen inside write_bronze()
   - Config (data dir) comes from config.settings, not hardcoded values
   - Uses logical_date for idempotent backfill support
   - XCom passes written paths downstream for lineage tracking
@@ -25,6 +25,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
 import pendulum
 from airflow import DAG
 from airflow.exceptions import AirflowException
@@ -85,7 +86,9 @@ dbt_project_config = ProjectConfig(
     models_relative_path="bitcoin_pipeline/dbt/models",
     # Build the Airflow task graph from this manifest instead of running dbt ls.
     manifest_path=DBT_MANIFEST,
-    # No packages.yml in this project → skip `dbt deps` (one less subprocess).
+    # packages.yml pins Elementary, but `dbt deps` is run once by the airflow-init
+    # service (into the bind-mounted repo) rather than per-task here — otherwise
+    # every model task in the group would re-install the packages.
     install_dbt_deps=False,
 )
 dbt_profile_config = ProfileConfig(
@@ -193,7 +196,7 @@ def ingest_fear_greed(**context) -> str:
     fetcher = FearGreedFetcher()
 
     latest = fetcher.fetch_latest()
-    df = __import__("pandas").DataFrame([latest])
+    df = pd.DataFrame([latest])
 
     path = write_bronze(
         df=df,
